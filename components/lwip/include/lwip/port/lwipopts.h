@@ -190,6 +190,8 @@ extern unsigned long os_random(void);
    ---------------------------------
 */
 
+#define LWIP_RAW                        1
+
 /*
    ----------------------------------
    ---------- DHCP options ----------
