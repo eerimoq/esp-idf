@@ -16,25 +16,10 @@
 #include "rom/ets_sys.h"
 #include "rom/uart.h"
 #include "sdkconfig.h"
-
-typedef enum{
-    XTAL_40M = 40,
-    XTAL_26M = 26,
-    XTAL_24M = 24,
-    XTAL_AUTO = 0
-} xtal_freq_t;
-
-typedef enum{
-    CPU_80M = 1,
-    CPU_160M = 2,
-    CPU_240M = 3,
-} cpu_freq_t;
-
-extern void phy_get_romfunc_addr();
-
-// TODO: these functions need to be moved from librtc to ESP-IDF
-extern void rtc_init_lite();
-extern void rtc_set_cpu_freq(xtal_freq_t xtal_freq, cpu_freq_t cpu_freq);
+#include "phy.h"
+#include "rtc.h"
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 /*
  * This function is not exposed as an API at this point,
@@ -50,9 +35,13 @@ void esp_set_cpu_freq(void)
 
     // freq will be changed to 40MHz in rtc_init_lite,
     // wait uart tx finish, otherwise some uart output will be lost
-    uart_tx_wait_idle(0);
+    uart_tx_wait_idle(CONFIG_CONSOLE_UART_NUM);
 
-    rtc_init_lite();
+    rtc_init_lite(XTAL_AUTO);
+    // work around a bug that RTC fast memory may be isolated
+    // from the system after rtc_init_lite
+    SET_PERI_REG_MASK(RTC_CNTL_PWC_REG, RTC_CNTL_FASTMEM_FORCE_NOISO_M);
+
     cpu_freq_t freq = CPU_80M;
     switch(freq_mhz) {
         case 240:
@@ -71,9 +60,9 @@ void esp_set_cpu_freq(void)
 
     // freq will be changed to freq in rtc_set_cpu_freq,
     // wait uart tx finish, otherwise some uart output will be lost
-    uart_tx_wait_idle(0);
+    uart_tx_wait_idle(CONFIG_CONSOLE_UART_NUM);
 
-    rtc_set_cpu_freq(XTAL_AUTO, freq);
+    rtc_set_cpu_freq(freq);
     ets_update_cpu_frequency(freq_mhz);
 }
 

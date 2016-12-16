@@ -18,11 +18,19 @@ API Reference
 
 .. _Instructions: template.html
 
+Header Files
+^^^^^^^^^^^^
+
+  * `driver/include/driver/ledc.h <https://github.com/espressif/esp-idf/blob/master/components/driver/include/driver/ledc.h>`_
+
 Data Structures
 ^^^^^^^^^^^^^^^
 
 .. doxygenstruct:: ledc_channel_config_t
+   :members:
+
 .. doxygenstruct:: ledc_timer_config_t
+   :members:
 
 Macros
 ^^^^^^

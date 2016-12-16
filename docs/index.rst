@@ -5,6 +5,9 @@ ESP32 Programming Guide
 
    Until ESP-IDF release 1.0, this documentation is a draft. It is incomplete and may have mistakes. Please mind your step!
 
+Documentation adressed to developers of applications for `ESP32 <https://espressif.com/en/products/hardware/esp32/overview>`_ by `Espressif <https://espressif.com/>`_ using `esp-idf <https://github.com/espressif/esp-idf>`_.
+
+
 Contents:
 
 .. toctree::
@@ -28,9 +31,13 @@ Contents:
    :caption: What Else?
    :maxdepth: 1
    
+   General Notes <general-notes>
    partition-tables
    build_system
    openocd
+   Flash encryption <security/flash-encryption>
+   Secure Boot <security/secure-boot>
+   ULP coprocessor <api/ulp.rst>
 
 .. API Reference
    ..
@@ -39,11 +46,12 @@ Contents:
    1. System - TBA
      1.1. Fundamentals of multiprocessor programming with FreeRTOS - TBA
      1.2. Application startup flow - TBA
-     1.3. Flash encryption and secure boot: how they work and APIs - TBA
+     1.3. Flash encryption and secure boot: how they work and APIs
      1.4. Lower Power Coprocessor - TBA
-     1.5. Watchdogs
-     1.6. ...
-   2. Memeory - TBA
+     1.5. Watchdogs <api/wdts>
+     1.6. Memory allocation <api/mem_alloc>
+     1.7. ...
+   2. Memory - TBA
      2.1. Memory layout of the application (IRAM/IROM, limitations of each) - TBA
      2.2. Flash layout and partitions - TBA
      2.3. Flash access APIs - TBA
@@ -59,7 +67,7 @@ Contents:
      6.1. GPIO
      6.2. ADC - TBA
      6.3. DAC - TBA
-     6.4. UART - TBA
+     6.4. UART
      6.5. I2C - TBA
      6.6. I2S - TBA
      6.7. SPI - TBA
@@ -76,9 +84,9 @@ Contents:
      7.3. Touch Sensor - TBA
    8. Protocols - TBA
    9. Components
-     9.1. Logging <api/log>
-     9.2  Non-Volatile Storage <api/nvs_flash>
-     9.3  Virtual Filesystem <api/vfs>
+     9.1. Logging
+     9.2  Non-Volatile Storage
+     9.3  Virtual Filesystem
      9.3. Http sever - TBA
    10. Applications - TBA
    ..
@@ -90,14 +98,24 @@ Contents:
    :maxdepth: 1
 
    Wi-Fi <api/esp_wifi>
+   Smart Config <api/esp_smartconfig>
    Bluetooth <api/bt>
-
+   Watchdogs <api/wdts>
+   OTA <api/ota>
    GPIO <api/gpio>
+   UART <api/uart>
    LED Control <api/ledc>
-
+   Remote Control <api/rmt>
+   Timer <api/timer>
+   Pulse Counter <api/pcnt>
+   SPI Flash and Partition APIs <api/spi_flash>
    Logging <api/log>
    Non-Volatile Storage <api/nvs_flash>
    Virtual Filesystem <api/vfs>
+   Ethernet <api/esp_eth>
+   Interrupt Allocation <api/intr_alloc>
+   Memory Allocation <api/mem_alloc>
+   Deep Sleep <api/deep_sleep>
    deep-sleep-stub
 
    Template <api/template>
@@ -114,6 +132,7 @@ Contents:
    :maxdepth: 1
 
    contributing
+   Style Guide <style-guide>
    documenting-code
    contributor-agreement
 
@@ -123,11 +142,9 @@ Contents:
 
    COPYRIGHT
 
-.. About - TBA
-
  
 Indices
-=======
+-------
 
 * :ref:`genindex`
 * :ref:`search`

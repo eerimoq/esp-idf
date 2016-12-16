@@ -23,6 +23,7 @@
 #include "soc/gpio_sig_map.h"
 #include "rom/gpio.h"
 #include "esp_attr.h"
+#include "esp_intr_alloc.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -185,6 +186,9 @@ typedef enum {
     GPIO_PULLDOWN_ENABLE = 0x1,    /*!< Enable GPIO pull-down resistor  */
 } gpio_pulldown_t;
 
+/**
+ * @brief Configuration parameters of GPIO pad for gpio_config function
+ */
 typedef struct {
     uint64_t pin_bit_mask;          /*!< GPIO pin: set with bit mask, each bit maps to a GPIO */
     gpio_mode_t mode;               /*!< GPIO mode: set input/output mode                     */
@@ -200,6 +204,9 @@ typedef enum {
     GPIO_FLOATING,                  /*!< Pad floating           */
 } gpio_pull_mode_t;
 
+
+
+typedef intr_handle_t gpio_isr_handle_t;
 typedef void (*gpio_event_callback)(gpio_num_t gpio_intr_num);
 
 /**
@@ -220,7 +227,7 @@ esp_err_t gpio_config(gpio_config_t *pGPIOConfig);
 /**
  * @brief  GPIO set interrupt trigger type
  *
- * @param  gpio_num GPIO number. If you want to set output level of GPIO16, gpio_num should be GPIO_NUM_16 (16);
+ * @param  gpio_num GPIO number. If you want to set the trigger type of e.g. of GPIO16, gpio_num should be GPIO_NUM_16 (16);
  * @param  intr_type Interrupt type, select from gpio_int_type_t
  *
  * @return
@@ -233,7 +240,7 @@ esp_err_t gpio_set_intr_type(gpio_num_t gpio_num, gpio_int_type_t intr_type);
 /**
  * @brief  Enable GPIO module interrupt signal
  *
- * @param  gpio_num GPIO number. If you want to set output level of GPIO16, gpio_num should be GPIO_NUM_16 (16);
+ * @param  gpio_num GPIO number. If you want to enable an interrupt on e.g. GPIO16, gpio_num should be GPIO_NUM_16 (16);
  *
  * @return
  *     - ESP_OK Success
@@ -245,7 +252,7 @@ esp_err_t gpio_intr_enable(gpio_num_t gpio_num);
 /**
  * @brief  Disable GPIO module interrupt signal
  *
- * @param  gpio_num GPIO number. If you want to set output level of GPIO16, gpio_num should be GPIO_NUM_16 (16);
+ * @param  gpio_num GPIO number. If you want to disable the interrupt of e.g. GPIO16, gpio_num should be GPIO_NUM_16 (16);
  *
  * @return
  *     - ESP_OK success
@@ -257,7 +264,7 @@ esp_err_t gpio_intr_disable(gpio_num_t gpio_num);
 /**
  * @brief  GPIO set output level
  *
- * @param  gpio_num GPIO number. If you want to set output level of GPIO16, gpio_num should be GPIO_NUM_16 (16);
+ * @param  gpio_num GPIO number. If you want to set the output level of e.g. GPIO16, gpio_num should be GPIO_NUM_16 (16);
  * @param  level Output level. 0: low ; 1: high
  *
  * @return
@@ -270,7 +277,7 @@ esp_err_t gpio_set_level(gpio_num_t gpio_num, uint32_t level);
 /**
  * @brief  GPIO get input level
  *
- * @param  gpio_num GPIO number. If you want to get level of pin GPIO16, gpio_num should be GPIO_NUM_16 (16);
+ * @param  gpio_num GPIO number. If you want to get the logic level of e.g. pin GPIO16, gpio_num should be GPIO_NUM_16 (16);
  *
  * @return
  *     - 0 the GPIO input level is 0
@@ -284,7 +291,7 @@ int gpio_get_level(gpio_num_t gpio_num);
  *
  * Configure GPIO direction,such as output_only,input_only,output_and_input
  *
- * @param  gpio_num  Configure GPIO pins number, it should be GPIO number. If you want to set direction of GPIO16, gpio_num should be GPIO_NUM_16 (16);
+ * @param  gpio_num  Configure GPIO pins number, it should be GPIO number. If you want to set direction of e.g. GPIO16, gpio_num should be GPIO_NUM_16 (16);
  * @param  mode GPIO direction
  *
  * @return
@@ -299,7 +306,7 @@ esp_err_t gpio_set_direction(gpio_num_t gpio_num, gpio_mode_t mode);
  *
  * User this Function,configure GPIO pull mode,such as pull-up,pull-down
  *
- * @param  gpio_num GPIO number. If you want to set pull up or down mode for GPIO16,gpio_num should be GPIO_NUM_16 (16);
+ * @param  gpio_num GPIO number. If you want to set pull up or down mode for e.g. GPIO16, gpio_num should be GPIO_NUM_16 (16);
  * @param  pull GPIO pull up/down mode.
  *
  * @return
@@ -314,7 +321,7 @@ esp_err_t gpio_set_pull_mode(gpio_num_t gpio_num, gpio_pull_mode_t pull);
   *
   * @param gpio_num GPIO number.
   *
-  * @param intr_type GPIO wake-up type. Only GPIO_INTR_LOW_LEVEL\GPIO_INTR_HIGH_LEVEL can be used.
+  * @param intr_type GPIO wake-up type. Only GPIO_INTR_LOW_LEVEL or GPIO_INTR_HIGH_LEVEL can be used.
   *
   * @return
   *     - ESP_OK Success
@@ -340,19 +347,65 @@ esp_err_t gpio_wakeup_disable(gpio_num_t gpio_num);
  *          Users should know that which CPU is running and then pick a INUM that is not used by system.
  *          We can find the information of INUM and interrupt level in soc.h.
  *
- * @param  gpio_intr_num  GPIO interrupt number,check the info in soc.h, and please see the core-isa.h for more details
  * @param  fn  Interrupt handler function.
- *
- *         @note
- *         Note that the handler function MUST be defined with attribution of "IRAM_ATTR".
- *
+ * @param  intr_alloc_flags Flags used to allocate the interrupt. One or multiple (ORred)
+ *            ESP_INTR_FLAG_* values. See esp_intr_alloc.h for more info.
  * @param  arg  Parameter for handler function
+ * @param  handle Pointer to return handle. If non-NULL, a handle for the interrupt will
+ *            be returned here.
  *
  * @return
  *     - ESP_OK Success ;
  *     - ESP_ERR_INVALID_ARG GPIO error
  */
-esp_err_t gpio_isr_register(uint32_t gpio_intr_num, void (*fn)(void*), void * arg);
+esp_err_t gpio_isr_register(void (*fn)(void*), void * arg, int intr_alloc_flags, gpio_isr_handle_t *handle);
+
+
+
+/**
+  * @brief Enable pull-up on GPIO.
+  *
+  * @param gpio_num GPIO number
+  *
+  * @return
+  *     - ESP_OK Success
+  *     - ESP_ERR_INVALID_ARG Parameter error
+  */
+esp_err_t gpio_pullup_en(gpio_num_t gpio_num);
+
+/**
+  * @brief Disable pull-up on GPIO.
+  *
+  * @param gpio_num GPIO number
+  *
+  * @return
+  *     - ESP_OK Success
+  *     - ESP_ERR_INVALID_ARG Parameter error
+  */
+esp_err_t gpio_pullup_dis(gpio_num_t gpio_num);
+
+/**
+  * @brief Enable pull-down on GPIO.
+  *
+  * @param gpio_num GPIO number
+  *
+  * @return
+  *     - ESP_OK Success
+  *     - ESP_ERR_INVALID_ARG Parameter error
+  */
+esp_err_t gpio_pulldown_en(gpio_num_t gpio_num);
+
+/**
+  * @brief Disable pull-down on GPIO.
+  *
+  * @param gpio_num GPIO number
+  *
+  * @return
+  *     - ESP_OK Success
+  *     - ESP_ERR_INVALID_ARG Parameter error
+  */
+esp_err_t gpio_pulldown_dis(gpio_num_t gpio_num);
+
 
 /**
  * ***************        ATTENTION       ********************/
@@ -365,7 +418,7 @@ esp_err_t gpio_isr_register(uint32_t gpio_intr_num, void (*fn)(void*), void * ar
  */
 
 /**
- *----------EXAMPLE TO CONIFGURE GPIO AS OUTPUT ------------ *
+ *----------EXAMPLE TO CONFIGURE GPIO AS OUTPUT ------------ *
  * @code{c}
  *     gpio_config_t io_conf;
  *     io_conf.intr_type = GPIO_INTR_DISABLE;             //disable interrupt
@@ -378,7 +431,7 @@ esp_err_t gpio_isr_register(uint32_t gpio_intr_num, void (*fn)(void*), void * ar
  **/
 
 /**
- *----------EXAMPLE TO CONIFGURE GPIO AS OUTPUT ------------ *
+ *----------EXAMPLE TO CONFIGURE GPIO AS OUTPUT ------------ *
  * @code{c}
  *     io_conf.intr_type = GPIO_INTR_POSEDGE;             //set posedge interrupt
  *     io_conf.mode = GPIO_MODE_INPUT;                        //set as input
@@ -391,8 +444,7 @@ esp_err_t gpio_isr_register(uint32_t gpio_intr_num, void (*fn)(void*), void * ar
 /**
  *----------EXAMPLE TO SET ISR HANDLER ----------------------
  * @code{c}
- * //the first parameter is INUM, you can pick one form interrupt level 1/2 which is not used by the system.
- * gpio_isr_register(18,gpio_intr_test,NULL);    //hook the isr handler for GPIO interrupt
+ * gpio_isr_register(gpio_intr_test,NULL, 0);    //hook the isr handler for GPIO interrupt
  * @endcode
  * @note
  *     1. user should arrange the INUMs that used, better not to use a same INUM for different interrupt.

@@ -37,9 +37,13 @@
 #include "lwip/sys.h"
 #include "lwip/mem.h"
 #include "arch/sys_arch.h"
+#include "lwip/stats.h"
 
 /* This is the number of threads that can be started with sys_thread_new() */
 #define SYS_THREAD_MAX 4
+
+static bool g_lwip_in_critical_section = false;
+static BaseType_t g_lwip_critical_section_needs_taskswitch;
 
 #if !LWIP_COMPAT_MUTEX
 /** Create a new mutex
@@ -121,7 +125,18 @@ sys_sem_new(sys_sem_t *sem, u8_t count)
 void
 sys_sem_signal(sys_sem_t *sem)
 {
-  xSemaphoreGive(*sem);
+  if (g_lwip_in_critical_section){
+    /* In function event_callback in sockets.c, lwip signals a semaphore inside a critical 
+     * section. According to the FreeRTOS documentation for FreertosTaskEnterCritical, it's 
+     * not allowed to call any FreeRTOS API function within a critical region. Unfortunately,  
+     * it's not feasible to rework the affected region in LWIP. As a solution, when in a 
+     * critical region, we call xSemaphoreGiveFromISR. This routine is hand-vetted to work 
+     * in a critical region and it will not cause a task switch.
+     */
+    xSemaphoreGiveFromISR(*sem, &g_lwip_critical_section_needs_taskswitch);
+  } else {
+    xSemaphoreGive(*sem);
+  }
 }
 
 /*-----------------------------------------------------------------------------------*/
@@ -370,6 +385,7 @@ sys_mbox_free(sys_mbox_t *mbox)
     if (post_null){
       LWIP_DEBUGF(ESP_THREAD_SAFE_DEBUG, ("sys_mbox_free: post null to mbox\n"));
       if (sys_mbox_trypost( mbox, NULL) != ERR_OK){
+        ESP_STATS_INC(esp.free_mbox_post_fail);
         LWIP_DEBUGF(ESP_THREAD_SAFE_DEBUG, ("sys_mbox_free: post null mbox fail\n"));
       } else {
         post_null = false;
@@ -451,6 +467,7 @@ sys_prot_t
 sys_arch_protect(void)
 {
   portENTER_CRITICAL(&g_lwip_mux);
+  g_lwip_in_critical_section = true;
   return (sys_prot_t) 1;
 }
 
@@ -465,7 +482,12 @@ void
 sys_arch_unprotect(sys_prot_t pval)
 {
   (void) pval;
+  g_lwip_in_critical_section = false;
   portEXIT_CRITICAL(&g_lwip_mux);
+  if (g_lwip_critical_section_needs_taskswitch){
+    g_lwip_critical_section_needs_taskswitch = 0;
+    portYIELD();
+  }
 }
 
 /*-----------------------------------------------------------------------------------*/

@@ -13,6 +13,7 @@
 // limitations under the License.
 #include <esp_types.h>
 #include "esp_intr.h"
+#include "esp_intr_alloc.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 #include "freertos/xtensa_api.h"
@@ -20,12 +21,13 @@
 #include "driver/ledc.h"
 #include "esp_log.h"
 
-static const char* LEDC_TAG = "LEDC";
+static const char* LEDC_TAG = "ledc";
 static portMUX_TYPE ledc_spinlock = portMUX_INITIALIZER_UNLOCKED;
-#define LEDC_CHECK(a, str, ret_val) if (!(a)) {                                         \
-        ESP_LOGE(LEDC_TAG,"%s:%d (%s):%s", __FILE__, __LINE__, __FUNCTION__, str);    \
-        return (ret_val);                                                               \
-        }
+#define LEDC_CHECK(a, str, ret_val) \
+    if (!(a)) { \
+        ESP_LOGE(LEDC_TAG,"%s(%d): %s", __FUNCTION__, __LINE__, str); \
+        return (ret_val); \
+    }
 
 esp_err_t ledc_timer_set(ledc_mode_t speed_mode, ledc_timer_t timer_sel, uint32_t div_num, uint32_t bit_num, ledc_clk_src_t clk_src)
 {
@@ -113,16 +115,14 @@ static esp_err_t ledc_enable_intr_type(ledc_mode_t speed_mode, uint32_t channel,
     return ESP_OK;
 }
 
-esp_err_t ledc_isr_register(uint32_t ledc_intr_num, void (*fn)(void*), void * arg)
+esp_err_t ledc_isr_register(void (*fn)(void*), void * arg, int intr_alloc_flags, ledc_isr_handle_t *handle)
 {
+    esp_err_t ret;
     LEDC_CHECK(fn, "ledc isr null", ESP_ERR_INVALID_ARG);
     portENTER_CRITICAL(&ledc_spinlock);
-    ESP_INTR_DISABLE(ledc_intr_num);
-    intr_matrix_set(xPortGetCoreID(), ETS_LEDC_INTR_SOURCE, ledc_intr_num);
-    xt_set_interrupt_handler(ledc_intr_num, fn, arg);
-    ESP_INTR_ENABLE(ledc_intr_num);
+    ret=esp_intr_alloc(ETS_LEDC_INTR_SOURCE, intr_alloc_flags, fn, arg, handle);
     portEXIT_CRITICAL(&ledc_spinlock);
-    return ESP_OK;
+    return ret;
 }
 
 esp_err_t ledc_timer_config(ledc_timer_config_t* timer_conf)
@@ -137,29 +137,32 @@ esp_err_t ledc_timer_config(ledc_timer_config_t* timer_conf)
         return ESP_ERR_INVALID_ARG;
     }
     if(timer_num > LEDC_TIMER_3) {
-        ESP_LOGE(LEDC_TAG, "Time Select %u", timer_num);
+        ESP_LOGE(LEDC_TAG, "invalid timer #%u", timer_num);
         return ESP_ERR_INVALID_ARG;
     }
     esp_err_t ret = ESP_OK;
-    uint32_t precision = (0x1 << bit_num);  //2**depth
-    uint64_t div_param = ((uint64_t) LEDC_APB_CLK_HZ << 8) / freq_hz / precision; //8bit fragment
-    int timer_clk_src;
-    /*Fail ,because the div_num overflow or too small*/
-    if(div_param <= 256 || div_param > LEDC_DIV_NUM_HSTIMER0_V) { //REF TICK
-        /*Selet the reference tick*/
+    uint32_t precision = (0x1 << bit_num);  // 2**depth
+    // Try calculating divisor based on LEDC_APB_CLK
+    ledc_clk_src_t timer_clk_src = LEDC_APB_CLK;
+    // div_param is a Q10.8 fixed point value
+    uint64_t div_param = ((uint64_t) LEDC_APB_CLK_HZ << 8) / freq_hz / precision;
+    if (div_param < 256) {
+        // divisor is too low
+        ESP_LOGE(LEDC_TAG, "requested frequency and bit depth can not be achieved, try reducing freq_hz or bit_num. div_param=%d", (uint32_t) div_param);
+        ret = ESP_FAIL;
+    }
+    if (div_param > LEDC_DIV_NUM_HSTIMER0_V) {
+        // APB_CLK results in divisor which too high. Try using REF_TICK as clock source.
+        timer_clk_src = LEDC_REF_TICK;
         div_param = ((uint64_t) LEDC_REF_CLK_HZ << 8) / freq_hz / precision;
-        if(div_param <= 256 || div_param > LEDC_DIV_NUM_HSTIMER0_V) {
-            ESP_LOGE(LEDC_TAG, "div param err,div_param=%u", (uint32_t)div_param);
+        if(div_param < 256 || div_param > LEDC_DIV_NUM_HSTIMER0_V) {
+            ESP_LOGE(LEDC_TAG, "requested frequency and bit depth can not be achieved, try increasing freq_hz or bit_num. div_param=%d", (uint32_t) div_param);
             ret = ESP_FAIL;
         }
-        timer_clk_src = LEDC_REF_TICK;
-    } else { //APB TICK
-        timer_clk_src = LEDC_APB_CLK;
     }
-    /*set timer parameters*/
-    /*timer settings decide the clk of counter and the period of PWM*/
+    // set timer parameters
     ledc_timer_set(speed_mode, timer_num, div_param, bit_num, timer_clk_src);
-    /*   reset timer.*/
+    // reset timer
     ledc_timer_rst(speed_mode, timer_num);
     return ret;
 }
@@ -174,7 +177,8 @@ esp_err_t ledc_set_pin(int gpio_num, ledc_mode_t speed_mode, ledc_channel_t ledc
     if(speed_mode == LEDC_HIGH_SPEED_MODE) {
         gpio_matrix_out(gpio_num, LEDC_HS_SIG_OUT0_IDX + ledc_channel, 0, 0);
     } else {
-
+        ESP_LOGE(LEDC_TAG, "low speed mode is not implemented");
+        return ESP_ERR_NOT_SUPPORTED;
     }
     return ESP_OK;
 }
@@ -191,6 +195,7 @@ esp_err_t ledc_channel_config(ledc_channel_config_t* ledc_conf)
     LEDC_CHECK(speed_mode < LEDC_SPEED_MODE_MAX, "ledc mode error", ESP_ERR_INVALID_ARG);
     LEDC_CHECK(GPIO_IS_VALID_OUTPUT_GPIO(gpio_num), "ledc GPIO output number error", ESP_ERR_INVALID_ARG);
     LEDC_CHECK(timer_select <= LEDC_TIMER_3, "ledc timer error", ESP_ERR_INVALID_ARG);
+    periph_module_enable(PERIPH_LEDC_MODULE);
     esp_err_t ret = ESP_OK;
     /*set channel parameters*/
     /*   channel parameters decide how the waveform looks like in one period*/

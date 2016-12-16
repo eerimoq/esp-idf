@@ -10,8 +10,8 @@ sys.path.append("..")
 from gen_esp32part import *
 
 SIMPLE_CSV = """
-# Name,Type,SubType,Offset,Size
-factory,0,2,65536,1048576
+# Name,Type,SubType,Offset,Size,Flags
+factory,0,2,65536,1048576,
 """
 
 LONGER_BINARY_TABLE = ""
@@ -36,7 +36,15 @@ LONGER_BINARY_TABLE += "\xAA\x50\x10\x00" + \
                        "\x00\x10\x00\x00" + \
                        "second" + ("\0"*10) + \
                        "\x00\x00\x00\x00"
+LONGER_BINARY_TABLE += "\xFF" * 32
 
+def _strip_trailing_ffs(binary_table):
+    """
+    Strip all FFs down to the last 32 bytes (terminating entry)
+    """
+    while binary_table.endswith("\xFF"*64):
+        binary_table = binary_table[0:len(binary_table)-32]
+    return binary_table
 
 class CSVParserTests(unittest.TestCase):
 
@@ -156,8 +164,8 @@ class BinaryOutputTests(unittest.TestCase):
 first, 0x30, 0xEE, 0x100400, 0x300000
 """
         t = PartitionTable.from_csv(csv)
-        tb = t.to_binary()
-        self.assertEqual(len(tb), 32)
+        tb = _strip_trailing_ffs(t.to_binary())
+        self.assertEqual(len(tb), 64)
         self.assertEqual('\xAA\x50', tb[0:2]) # magic
         self.assertEqual('\x30\xee', tb[2:4]) # type, subtype
         eo, es = struct.unpack("<LL", tb[4:12])
@@ -170,10 +178,22 @@ first, 0x30, 0xEE, 0x100400, 0x300000
 second,0x31, 0xEF,         , 0x100000
 """
         t = PartitionTable.from_csv(csv)
-        tb = t.to_binary()
-        self.assertEqual(len(tb), 64)
+        tb = _strip_trailing_ffs(t.to_binary())
+        self.assertEqual(len(tb), 96)
         self.assertEqual('\xAA\x50', tb[0:2])
         self.assertEqual('\xAA\x50', tb[32:34])
+
+
+    def test_encrypted_flag(self):
+        csv = """
+# Name, Type, Subtype, Offset, Size, Flags
+first, app, factory,, 1M, encrypted
+"""
+        t = PartitionTable.from_csv(csv)
+        self.assertTrue(t[0].encrypted)
+        tb = _strip_trailing_ffs(t.to_binary())
+        tr = PartitionTable.from_binary(tb)
+        self.assertTrue(tr[0].encrypted)
 
 
 class BinaryParserTests(unittest.TestCase):
@@ -184,14 +204,15 @@ class BinaryParserTests(unittest.TestCase):
                 "\x00\x00\x10\x00" + \
                 "\x00\x00\x20\x00" + \
                 "0123456789abc\0\0\0" + \
-                "\x00\x00\x00\x00"
+                "\x00\x00\x00\x00" + \
+                "\xFF" * 32
         # verify that parsing 32 bytes as a table
         # or as a single Definition are the same thing
         t = PartitionTable.from_binary(entry)
         self.assertEqual(len(t), 1)
         t[0].verify()
 
-        e = PartitionDefinition.from_binary(entry)
+        e = PartitionDefinition.from_binary(entry[:32])
         self.assertEqual(t[0], e)
         e.verify()
 
@@ -215,7 +236,7 @@ class BinaryParserTests(unittest.TestCase):
         self.assertEqual(t[2].type, 0x10)
         self.assertEqual(t[2].name, "second")
 
-        round_trip = t.to_binary()
+        round_trip = _strip_trailing_ffs(t.to_binary())
         self.assertEqual(round_trip, LONGER_BINARY_TABLE)
 
     def test_bad_magic(self):
@@ -267,7 +288,7 @@ class CSVOutputTests(unittest.TestCase):
         self.assertEqual(row[0], "factory")
         self.assertEqual(row[1], "app")
         self.assertEqual(row[2], "2")
-        self.assertEqual(row[3], "64K")
+        self.assertEqual(row[3], "0x10000")
         self.assertEqual(row[4], "1M")
 
         # round trip back to a PartitionTable and check is identical
@@ -291,7 +312,7 @@ class CommandLineTests(unittest.TestCase):
             # reopen the CSV and check the generated binary is identical
             with open(csvpath, 'r') as f:
                 from_csv = PartitionTable.from_csv(f.read())
-            self.assertEqual(from_csv.to_binary(), LONGER_BINARY_TABLE)
+            self.assertEqual(_strip_trailing_ffs(from_csv.to_binary()), LONGER_BINARY_TABLE)
 
             # run gen_esp32part.py to conver the CSV to binary again
             subprocess.check_call([sys.executable, "../gen_esp32part.py",
@@ -299,6 +320,7 @@ class CommandLineTests(unittest.TestCase):
             # assert that file reads back as identical
             with open(binpath, 'rb') as f:
                 binary_readback = f.read()
+            binary_readback = _strip_trailing_ffs(binary_readback)
             self.assertEqual(binary_readback, LONGER_BINARY_TABLE)
 
         finally:

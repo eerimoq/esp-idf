@@ -17,6 +17,7 @@
 #include "esp_attr.h"
 #include "esp_err.h"
 #include "esp_intr.h"
+#include "esp_intr_alloc.h"
 
 #include "rom/ets_sys.h"
 #include "rom/uart.h"
@@ -45,14 +46,9 @@ the ISR will cause it to switch _away_ from it. portYIELD_FROM_ISR will probably
 */
 static void esp_crosscore_isr(void *arg) {
     uint32_t myReasonVal;
-#if 0
     //A pointer to the correct reason array item is passed to this ISR.
     volatile uint32_t *myReason=arg;
-#else
-    //The previous line does not work yet, the interrupt code needs work to understand two separate interrupt and argument
-    //tables... this is a valid but slightly less optimal replacement.
-    volatile uint32_t *myReason=&reason[xPortGetCoreID()];
-#endif
+
     //Clear the interrupt first.
     if (xPortGetCoreID()==0) {
         WRITE_PERI_REG(DPORT_CPU_INTR_FROM_CPU_0_REG, 0);
@@ -77,14 +73,11 @@ void esp_crosscore_int_init() {
     portENTER_CRITICAL(&reasonSpinlock);
     reason[xPortGetCoreID()]=0;
     portEXIT_CRITICAL(&reasonSpinlock);
-    ESP_INTR_DISABLE(ETS_FROM_CPU_INUM);
     if (xPortGetCoreID()==0) {
-        intr_matrix_set(xPortGetCoreID(), ETS_FROM_CPU_INTR0_SOURCE, ETS_FROM_CPU_INUM);
+        esp_intr_alloc(ETS_FROM_CPU_INTR0_SOURCE, ESP_INTR_FLAG_IRAM, esp_crosscore_isr, (void*)&reason[xPortGetCoreID()], NULL);
     } else {
-        intr_matrix_set(xPortGetCoreID(), ETS_FROM_CPU_INTR1_SOURCE, ETS_FROM_CPU_INUM);
+        esp_intr_alloc(ETS_FROM_CPU_INTR1_SOURCE, ESP_INTR_FLAG_IRAM, esp_crosscore_isr, (void*)&reason[xPortGetCoreID()], NULL);
     }
-    xt_set_interrupt_handler(ETS_FROM_CPU_INUM, esp_crosscore_isr, (void*)&reason[xPortGetCoreID()]);
-    ESP_INTR_ENABLE(ETS_FROM_CPU_INUM);
 }
 
 void esp_crosscore_int_send_yield(int coreId) {
