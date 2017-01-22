@@ -89,12 +89,6 @@ typedef struct {
 #define INT15RES INTDESC_SPECIAL
 #endif
 
-#if CONFIG_FREERTOS_CORETIMER_2
-#define INT16RES INTDESC_RESVD
-#else
-#define INT16RES INTDESC_SPECIAL
-#endif
-
 //This is basically a software-readable version of the interrupt usage table in include/soc/soc.h
 const static int_desc_t int_desc[32]={
     { 1, INTTP_LEVEL, {INTDESC_RESVD,  INTDESC_RESVD } }, //0
@@ -113,7 +107,7 @@ const static int_desc_t int_desc[32]={
     { 1, INTTP_LEVEL, {INTDESC_NORMAL, INTDESC_NORMAL} }, //13
     { 7, INTTP_LEVEL, {INTDESC_RESVD,  INTDESC_RESVD } }, //14, NMI
     { 3, INTTP_NA,    {INT15RES,       INT15RES      } }, //15
-    { 5, INTTP_NA,    {INT16RES,       INT16RES      } }, //16
+    { 5, INTTP_NA,    {INTDESC_SPECIAL,INTDESC_SPECIAL} }, //16
     { 1, INTTP_LEVEL, {INTDESC_NORMAL, INTDESC_NORMAL} }, //17
     { 1, INTTP_LEVEL, {INTDESC_NORMAL, INTDESC_NORMAL} }, //18
     { 2, INTTP_LEVEL, {INTDESC_NORMAL, INTDESC_NORMAL} }, //19
@@ -446,6 +440,12 @@ esp_err_t esp_intr_alloc_intrstatus(int source, int flags, uint32_t intrstatusre
     if ((flags&ESP_INTR_FLAG_SHARED) && (!handler || source<0)) return ESP_ERR_INVALID_ARG;
     //Statusreg should have a mask
     if (intrstatusreg && !intrstatusmask) return ESP_ERR_INVALID_ARG;
+    //If the ISR is marked to be IRAM-resident, the handler must not be in the cached region
+    if ((flags&ESP_INTR_FLAG_IRAM) &&
+            (ptrdiff_t) handler >= 0x400C0000 &&
+            (ptrdiff_t) handler < 0x50000000 ) {
+        return ESP_ERR_INVALID_ARG;
+    }
 
     //Default to prio 1 for shared interrupts. Default to prio 1, 2 or 3 for non-shared interrupts.
     if ((flags&ESP_INTR_FLAG_LEVELMASK)==0) {
@@ -636,7 +636,7 @@ int esp_intr_get_cpu(intr_handle_t handle)
 //Muxing an interrupt source to interrupt 6, 7, 11, 15, 16 or 29 cause the interrupt to effectively be disabled.
 #define INT_MUX_DISABLED_INTNO 6
 
-esp_err_t esp_intr_enable(intr_handle_t handle)
+esp_err_t IRAM_ATTR esp_intr_enable(intr_handle_t handle)
 {
     if (!handle) return ESP_ERR_INVALID_ARG;
     portENTER_CRITICAL(&spinlock);
@@ -659,7 +659,7 @@ esp_err_t esp_intr_enable(intr_handle_t handle)
     return ESP_OK;
 }
 
-esp_err_t esp_intr_disable(intr_handle_t handle)
+esp_err_t IRAM_ATTR esp_intr_disable(intr_handle_t handle)
 {
     if (!handle) return ESP_ERR_INVALID_ARG;
     portENTER_CRITICAL(&spinlock);
@@ -691,7 +691,7 @@ void esp_intr_noniram_disable()
     int oldint;
     int cpu=xPortGetCoreID();
     int intmask=~non_iram_int_mask[cpu];
-    assert(non_iram_int_disabled_flag[cpu]==false);
+    if (non_iram_int_disabled_flag[cpu]) abort();
     non_iram_int_disabled_flag[cpu]=true;
     asm volatile (
         "movi %0,0\n"
@@ -700,7 +700,7 @@ void esp_intr_noniram_disable()
         "and a3,%0,%1\n"        //mask ints that need disabling
         "wsr a3,INTENABLE\n"    //write back
         "rsync\n"
-        :"=r"(oldint):"r"(intmask):"a3");
+        :"=&r"(oldint):"r"(intmask):"a3");
     //Save which ints we did disable
     non_iram_int_disabled[cpu]=oldint&non_iram_int_mask[cpu];
 }
@@ -709,7 +709,7 @@ void esp_intr_noniram_enable()
 {
     int cpu=xPortGetCoreID();
     int intmask=non_iram_int_disabled[cpu];
-    assert(non_iram_int_disabled_flag[cpu]==true);
+    if (!non_iram_int_disabled_flag[cpu]) abort();
     non_iram_int_disabled_flag[cpu]=false;
     asm volatile (
         "movi a3,0\n"

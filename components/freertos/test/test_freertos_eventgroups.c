@@ -34,11 +34,11 @@ static void task_event_group_call_response(void *param)
     printf("Task %d done\n", task_num);
 
     /* Delay is due to not-yet-fixed bug with deleting tasks at same time */
-    vTaskDelay(100 / portTICK_RATE_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
     vTaskDelete(NULL);
 }
 
-TEST_CASE("FreeRTOS Event Groups", "[freertos]")
+TEST_CASE("FreeRTOS Event Groups", "[freertos][ignore]")
 {
     eg = xEventGroupCreate();
 
@@ -85,11 +85,11 @@ static void task_test_sync(void *param)
     printf("Done %d = %x\n", task_num, after_done);
 
     /* Delay is due to not-yet-fixed bug with deleting tasks at same time */
-    vTaskDelay(100 / portTICK_RATE_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
     vTaskDelete(NULL);
 }
 
-TEST_CASE("FreeRTOS Event Group Sync", "[freertos]")
+TEST_CASE("FreeRTOS Event Group Sync", "[freertos][ignore]")
 {
     eg = xEventGroupCreate();
 

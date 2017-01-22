@@ -9,7 +9,7 @@ Windows doesn't have a built-in "make" environment, so as well as installing the
 
 The quick setup is to download the Windows all-in-one toolchain & MSYS zip file from dl.espressif.com:
 
-https://dl.espressif.com/dl/esp32_win32_msys2_environment_and_toolchain-20160816.zip
+https://dl.espressif.com/dl/esp32_win32_msys2_environment_and_toolchain-20170111.zip
 
 Unzip the zip file to C:\ and it will create an "msys32" directory with a pre-prepared environment.
 
@@ -23,7 +23,7 @@ As an alternative to getting a pre-prepared environment, you can set up the envi
 
 * Run through the installer steps, and accept the "Run MSYS2 now" option at the end. A window will open with a MSYS2 terminal.
 
-* The ESP-IDF repository on github contains a script in the tools directory titled ``windows_install_prerequisites.sh``. If you haven't downloaded the ESP-IDF yet, that's OK - you can just `download that one file in Raw format from here <https://github.com/espressif/esp-idf/raw/master/tools/windows/windows_install_prerequisites.sh>`_. Save it somewhere on your computer.
+* The ESP-IDF repository on github contains a script in the tools directory titled ``windows_install_prerequisites.sh``. If you haven't downloaded the ESP-IDF yet, that's OK - you can just download that one file in Raw format from here: :idf_raw:`tools/windows/windows_install_prerequisites.sh`. Save it somewhere on your computer.
 
 * Type the path to the shell script into the MSYS2 terminal window. You can type it as a normal Windows path, but use forward-slashes instead of back-slashes. ie: ``C:/Users/myuser/Downloads/windows_install_prerequisites.sh``. You can read the script beforehand to check what it does.
 
@@ -38,7 +38,7 @@ Another Alternative Step 1: Just download a toolchain
 
 If you already have an MSYS2 install or want to do things differently, you can download just the toolchain here:
 
-https://dl.espressif.com/dl/xtensa-esp32-elf-win32-1.22.0-59.zip
+https://dl.espressif.com/dl/xtensa-esp32-elf-win32-1.22.0-61-gab8375a-5.2.0.zip
 
 If you followed one of the above options for Step 1, you won't need this download.
 

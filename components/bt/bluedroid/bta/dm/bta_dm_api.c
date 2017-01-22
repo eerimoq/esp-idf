@@ -1014,8 +1014,8 @@ void BTA_DmSetBleAdvParamsAll (UINT16 adv_int_min, UINT16 adv_int_max,
 #if BLE_INCLUDED == TRUE
     tBTA_DM_API_BLE_ADV_PARAMS_ALL    *p_msg;
 
-    APPL_TRACE_ERROR ("BTA_DmSetBleAdvParamsAll: %d, %d\n", adv_int_min, adv_int_max);
-    APPL_TRACE_ERROR ("adv_type = %d, addr_type_own = %d, chnl_map = %d, adv_fil_pol = %d\n",
+    APPL_TRACE_API ("BTA_DmSetBleAdvParamsAll: %d, %d\n", adv_int_min, adv_int_max);
+    APPL_TRACE_API ("adv_type = %d, addr_type_own = %d, chnl_map = %d, adv_fil_pol = %d\n",
                       adv_type, addr_type_own, chnl_map, adv_fil_pol);
     if ((p_msg = (tBTA_DM_API_BLE_ADV_PARAMS_ALL *) GKI_getbuf(sizeof(tBTA_DM_API_BLE_ADV_PARAMS_ALL)
                  + sizeof(tBLE_BD_ADDR))) != NULL) {
@@ -1079,6 +1079,35 @@ void BTA_DmBleSetAdvConfig (tBTA_BLE_AD_MASK data_mask, tBTA_BLE_ADV_DATA *p_adv
 
 /*******************************************************************************
 **
+** Function         BTA_DmBleSetAdvConfigRaw
+**
+** Description      This function is called to set raw Advertising data
+**
+** Parameters       p_raw_adv : raw advertising data.
+**                  raw_adv_len : raw advertising data length.
+**                  p_adv_data_cback : set adv data complete callback.
+**
+** Returns          None
+**
+*******************************************************************************/
+void BTA_DmBleSetAdvConfigRaw (UINT8 *p_raw_adv, UINT32 raw_adv_len,
+                            tBTA_SET_ADV_DATA_CMPL_CBACK *p_adv_data_cback)
+{
+    tBTA_DM_API_SET_ADV_CONFIG_RAW  *p_msg;
+
+    if ((p_msg = (tBTA_DM_API_SET_ADV_CONFIG_RAW *)
+                 GKI_getbuf(sizeof(tBTA_DM_API_SET_ADV_CONFIG_RAW))) != NULL) {
+        p_msg->hdr.event = BTA_DM_API_BLE_SET_ADV_CONFIG_RAW_EVT;
+        p_msg->p_adv_data_cback = p_adv_data_cback;
+        p_msg->p_raw_adv = p_raw_adv;
+        p_msg->raw_adv_len = raw_adv_len;
+
+        bta_sys_sendmsg(p_msg);
+    }
+}
+
+/*******************************************************************************
+**
 ** Function         BTA_DmBleSetScanRsp
 **
 ** Description      This function is called to override the BTA scan response.
@@ -1099,6 +1128,35 @@ extern void BTA_DmBleSetScanRsp (tBTA_BLE_AD_MASK data_mask, tBTA_BLE_ADV_DATA *
         p_msg->data_mask = data_mask;
         p_msg->p_adv_data_cback = p_adv_data_cback;
         p_msg->p_adv_cfg = p_adv_cfg;
+
+        bta_sys_sendmsg(p_msg);
+    }
+}
+
+/*******************************************************************************
+**
+** Function         BTA_DmBleSetScanRspRaw
+**
+** Description      This function is called to set raw scan response data
+**
+** Parameters       p_raw_scan_rsp : raw scan_rspertising data.
+**                  raw_scan_rsp_len : raw scan_rspertising data length.
+**                  p_scan_rsp_data_cback : set scan_rsp data complete callback.
+**
+** Returns          None
+**
+*******************************************************************************/
+void BTA_DmBleSetScanRspRaw (UINT8 *p_raw_scan_rsp, UINT32 raw_scan_rsp_len,
+                            tBTA_SET_ADV_DATA_CMPL_CBACK *p_scan_rsp_data_cback)
+{
+    tBTA_DM_API_SET_ADV_CONFIG_RAW  *p_msg;
+
+    if ((p_msg = (tBTA_DM_API_SET_ADV_CONFIG_RAW *)
+                 GKI_getbuf(sizeof(tBTA_DM_API_SET_ADV_CONFIG_RAW))) != NULL) {
+        p_msg->hdr.event = BTA_DM_API_BLE_SET_SCAN_RSP_RAW_EVT;
+        p_msg->p_adv_data_cback = p_scan_rsp_data_cback;
+        p_msg->p_raw_adv = p_raw_scan_rsp;
+        p_msg->raw_adv_len = raw_scan_rsp_len;
 
         bta_sys_sendmsg(p_msg);
     }

@@ -13,10 +13,10 @@
 // limitations under the License.
 
 #include <stdint.h>
+#include "esp_attr.h"
 #include "rom/ets_sys.h"
 #include "rom/uart.h"
 #include "sdkconfig.h"
-#include "phy.h"
 #include "rtc.h"
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
@@ -31,7 +31,6 @@
 void esp_set_cpu_freq(void)
 {
     uint32_t freq_mhz = CONFIG_ESP32_DEFAULT_CPU_FREQ_MHZ;
-    phy_get_romfunc_addr();
 
     // freq will be changed to 40MHz in rtc_init_lite,
     // wait uart tx finish, otherwise some uart output will be lost
@@ -66,3 +65,10 @@ void esp_set_cpu_freq(void)
     ets_update_cpu_frequency(freq_mhz);
 }
 
+void IRAM_ATTR ets_update_cpu_frequency(uint32_t ticks_per_us)
+{
+    extern uint32_t g_ticks_per_us_pro;  // g_ticks_us defined in ROM for PRO CPU
+    extern uint32_t g_ticks_per_us_app;  // same defined for APP CPU
+    g_ticks_per_us_pro = ticks_per_us;
+    g_ticks_per_us_app = ticks_per_us;
+}

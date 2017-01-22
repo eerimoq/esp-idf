@@ -31,6 +31,8 @@ extern "C" {
 
 #define SPI_FLASH_SEC_SIZE  4096    /**< SPI Flash sector size */
 
+#define SPI_FLASH_MMU_PAGE_SIZE 0x10000 /**< Flash cache MMU mapping page size */
+
 /**
  * @brief  Initialize SPI flash access driver
  *
@@ -78,13 +80,13 @@ esp_err_t spi_flash_erase_range(size_t start_address, size_t size);
  * @note If source address is in DROM, this function will return
  *       ESP_ERR_INVALID_ARG.
  *
- * @param  dest  destination address in Flash. Must be a multiple of 4 bytes.
- * @param  src   pointer to the source buffer.
- * @param  size  length of data, in bytes. Must be a multiple of 4 bytes.
+ * @param  dest_addr destination address in Flash. Must be a multiple of 4 bytes.
+ * @param  src       pointer to the source buffer.
+ * @param  size      length of data, in bytes. Must be a multiple of 4 bytes.
  *
  * @return esp_err_t
  */
-esp_err_t spi_flash_write(size_t dest, const void *src, size_t size);
+esp_err_t spi_flash_write(size_t dest_addr, const void *src, size_t size);
 
 
 /**
@@ -92,21 +94,42 @@ esp_err_t spi_flash_write(size_t dest, const void *src, size_t size);
  *
  * @note Flash encryption must be enabled for this function to work.
  *
- * @note Address in flash, dest, has to be 32-byte aligned.
+ * @note Flash encryption must be enabled when calling this function.
+ * If flash encryption is disabled, the function returns
+ * ESP_ERR_INVALID_STATE.  Use esp_flash_encryption_enabled()
+ * function to determine if flash encryption is enabled.
  *
- * @note If source address is in DROM, this function will return
- *       ESP_ERR_INVALID_ARG.
+ * @note Both dest_addr and size must be multiples of 16 bytes. For
+ * absolute best performance, both dest_addr and size arguments should
+ * be multiples of 32 bytes.
  *
- * @param  dest  destination address in Flash. Must be a multiple of 32 bytes.
- * @param  src   pointer to the source buffer.
- * @param  size  length of data, in bytes. Must be a multiple of 32 bytes.
+ * @param  dest_addr destination address in Flash. Must be a multiple of 16 bytes.
+ * @param  src       pointer to the source buffer.
+ * @param  size      length of data, in bytes. Must be a multiple of 16 bytes.
  *
  * @return esp_err_t
  */
-esp_err_t spi_flash_write_encrypted(size_t dest, const void *src, size_t size);
+esp_err_t spi_flash_write_encrypted(size_t dest_addr, const void *src, size_t size);
 
 /**
  * @brief  Read data from Flash.
+ *
+ * @param  src_addr source address of the data in Flash.
+ * @param  dest     pointer to the destination buffer
+ * @param  size     length of data
+ *
+ * @return esp_err_t
+ */
+esp_err_t spi_flash_read(size_t src_addr, void *dest, size_t size);
+
+
+/**
+ * @brief  Read data from Encrypted Flash.
+ *
+ * If flash encryption is enabled, this function will transparently decrypt data as it is read.
+ * If flash encryption is not enabled, this function behaves the same as spi_flash_read().
+ *
+ * See esp_flash_encryption_enabled() for a function to check if flash encryption is enabled.
  *
  * @param  src   source address of the data in Flash.
  * @param  dest  pointer to the destination buffer
@@ -114,7 +137,7 @@ esp_err_t spi_flash_write_encrypted(size_t dest, const void *src, size_t size);
  *
  * @return esp_err_t
  */
-esp_err_t spi_flash_read(size_t src, void *dest, size_t size);
+esp_err_t spi_flash_read_encrypted(size_t src, void *dest, size_t size);
 
 /**
  * @brief Enumeration which specifies memory space requested in an mmap call
@@ -140,7 +163,8 @@ typedef uint32_t spi_flash_mmap_handle_t;
  * page allocation, use spi_flash_mmap_dump function.
  *
  * @param src_addr  Physical address in flash where requested region starts.
- *                  This address *must* be aligned to 64kB boundary.
+ *                  This address *must* be aligned to 64kB boundary
+ *                  (SPI_FLASH_MMU_PAGE_SIZE).
  * @param size  Size of region which has to be mapped. This size will be rounded
  *              up to a 64k boundary.
  * @param memory  Memory space where the region should be mapped
@@ -149,7 +173,7 @@ typedef uint32_t spi_flash_mmap_handle_t;
  *
  * @return  ESP_OK on success, ESP_ERR_NO_MEM if pages can not be allocated
  */
-esp_err_t spi_flash_mmap(uint32_t src_addr, size_t size, spi_flash_mmap_memory_t memory,
+esp_err_t spi_flash_mmap(size_t src_addr, size_t size, spi_flash_mmap_memory_t memory,
                          const void** out_ptr, spi_flash_mmap_handle_t* out_handle);
 
 /**
@@ -172,6 +196,49 @@ void spi_flash_munmap(spi_flash_mmap_handle_t handle);
  * MMU table and corresponding reference counts.
  */
 void spi_flash_mmap_dump();
+
+/**
+ * @brief SPI flash critical section enter function.
+ */
+typedef void (*spi_flash_guard_start_func_t)(void);
+/**
+ * @brief SPI flash critical section exit function.
+ */
+typedef void (*spi_flash_guard_end_func_t)(void);
+
+/**
+ * Structure holding SPI flash access critical section management functions
+ *
+ * @note Structure and corresponding guard functions should not reside in flash.
+ *       For example structure can be placed in DRAM and functions in IRAM sections.
+ */
+typedef struct {
+    spi_flash_guard_start_func_t    start;  /**< critical section start func */
+    spi_flash_guard_end_func_t      end;    /**< critical section end func */
+} spi_flash_guard_funcs_t;
+
+/**
+ * @brief  Sets guard functions to access flash.
+ *
+ * @note Pointed structure and corresponding guard functions should not reside in flash.
+ *       For example structure can be placed in DRAM and functions in IRAM sections.
+ *
+ * @param funcs pointer to structure holding flash access guard functions.
+ */
+void spi_flash_guard_set(const spi_flash_guard_funcs_t* funcs);
+
+/**
+ * @brief Default OS-aware flash access guard functions
+ */
+extern const spi_flash_guard_funcs_t g_flash_guard_default_ops;
+
+/**
+ * @brief Non-OS flash access guard functions
+ *
+ * @note This version of flash guard functions is to be used when no OS is present or from panic handler.
+ *       It does not use any OS primitives and IPC and implies that only calling CPU is active.
+ */
+extern const spi_flash_guard_funcs_t g_flash_guard_no_os_ops;
 
 #if CONFIG_SPI_FLASH_ENABLE_COUNTERS
 
