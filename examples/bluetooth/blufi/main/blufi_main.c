@@ -312,10 +312,16 @@ void app_main()
 {
     esp_err_t ret;
 
-    nvs_flash_init();
+    ESP_ERROR_CHECK( nvs_flash_init() );
     initialise_wifi();
 
     esp_bt_controller_init();
+
+    ret = esp_bt_controller_enable(ESP_BT_MODE_BTDM);
+    if (ret) {
+        BLUFI_ERROR("%s enable bt controller failed\n", __func__);
+        return;
+    }
 
     ret = esp_bluedroid_init();
     if (ret) {

@@ -144,7 +144,7 @@ The minimal ``component.mk`` file is an empty file(!). If the file is empty, the
 
 See `example component makefiles` for more complete component makefile examples.
 
-Note that there is a different between an empty ``component.mk`` file (which invokes default component build behaviour) and no ``component.mk`` file (which means no default component build behaviour will occur.) It is possible for a component to have no `component.mk` file, if it only contains other files which influence the project configuration or build process.
+Note that there is a difference between an empty ``component.mk`` file (which invokes default component build behaviour) and no ``component.mk`` file (which means no default component build behaviour will occur.) It is possible for a component to have no `component.mk` file, if it only contains other files which influence the project configuration or build process.
 
 .. component variables:
 
@@ -304,6 +304,17 @@ Second Level: Component Makefiles
 - The ``component_project_vars.mk`` file has its own target in ``component_wrapper.mk``, which is evaluated from ``project.mk`` if this file needs to be rebuilt due to changes in the component makefile or the project configuration.
 
 To better understand the component make process, have a read through the ``component_wrapper.mk`` file and some of the ``component.mk`` files included with esp-idf.
+
+Running Make Non-Interactively
+------------------------------
+
+When running ``make`` in a situation where you don't want interactive prompts (for example: inside an IDE or an automated build system) append ``BATCH_BUILD=1`` to the make arguments (or set it as an environment variable).
+
+Setting ``BATCH_BUILD`` implies the following:
+
+- Verbose output (same as ``V=1``, see below). If you don't want verbose output, also set ``V=0``.
+- If the project configuration is missing new configuration items (from new components or esp-idf updates) then the project use the default values, instead of prompting the user for each item.
+- If the build system needs to invoke ``menuconfig``, an error is printed and the build fails.
 
 Debugging The Make Process
 --------------------------

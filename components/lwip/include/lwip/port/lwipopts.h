@@ -208,6 +208,11 @@
 
 #define DHCP_MAXRTX                     0
 
+/**
+ * DHCP_DOES_ARP_CHECK==1: Do an ARP check on the offered address.
+ */
+#define DHCP_DOES_ARP_CHECK             CONFIG_LWIP_DHCP_DOES_ARP_CHECK
+
 /*
    ------------------------------------
    ---------- AUTOIP options ----------
@@ -599,6 +604,7 @@
 #define ESP_LIGHT_SLEEP                 1
 #define ESP_L2_TO_L3_COPY               CONFIG_L2_TO_L3_COPY
 #define ESP_CNT_DEBUG                   0
+#define ESP_DHCP_TIMER                  1
 
 #define TCP_WND_DEFAULT                 (4*TCP_MSS)
 #define TCP_SND_BUF_DEFAULT             (2*TCP_MSS)

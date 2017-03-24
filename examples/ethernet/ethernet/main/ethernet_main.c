@@ -37,12 +37,15 @@
 static const char *TAG = "eth_demo";
 
 #define DEFAULT_PHY_CONFIG (AUTO_MDIX_ENABLE|AUTO_NEGOTIATION_ENABLE|AN_1|AN_0|LED_CFG)
+#define PIN_PHY_POWER 17
+#define PIN_SMI_MDC   23
+#define PIN_SMI_MDIO  18
 
 void phy_tlk110_check_phy_init(void)
 {
     while((esp_eth_smi_read(BASIC_MODE_STATUS_REG) & AUTO_NEGOTIATION_COMPLETE ) != AUTO_NEGOTIATION_COMPLETE)
     {};
-    while((esp_eth_smi_read(PHY_STATUS_REG) & AUTO_NEGTIATION_STATUS ) != AUTO_NEGTIATION_STATUS)
+    while((esp_eth_smi_read(PHY_STATUS_REG) & AUTO_NEGOTIATION_STATUS ) != AUTO_NEGOTIATION_STATUS)
     {};
     while((esp_eth_smi_read(CABLE_DIAGNOSTIC_CONTROL_REG) & DIAGNOSTIC_DONE ) != DIAGNOSTIC_DONE)
     {};
@@ -87,6 +90,17 @@ void phy_enable_flow_ctrl(void)
     esp_eth_smi_write(AUTO_NEG_ADVERTISEMENT_REG,data|ASM_DIR|PAUSE);
 }
 
+void phy_tlk110_power_enable(bool enable)
+{
+    gpio_pad_select_gpio(PIN_PHY_POWER);
+    gpio_set_direction(PIN_PHY_POWER,GPIO_MODE_OUTPUT);
+    if(enable == true) {
+        gpio_set_level(PIN_PHY_POWER, 1);
+    } else {
+        gpio_set_level(PIN_PHY_POWER, 0);
+    }    
+}
+
 void phy_tlk110_init(void)
 {
     esp_eth_smi_write(PHY_RESET_CONTROL_REG, SOFTWARE_RESET);
@@ -94,7 +108,7 @@ void phy_tlk110_init(void)
     while (esp_eth_smi_read(PHY_IDENTIFIER_REG) != OUI_MSB_21TO6_DEF) {
     }
 
-    esp_eth_smi_write(SOFTWARE_STRAP_CONTROL_REG, DEFAULT_PHY_CONFIG |SW_STRAP_CONFIG_DONE);
+    esp_eth_smi_write(SW_STRAP_CONTROL_REG, DEFAULT_PHY_CONFIG | SW_STRAP_CONFIG_DONE);
     
     ets_delay_us(300);
 
@@ -117,11 +131,11 @@ void eth_gpio_config_rmii(void)
     //rmii clk  ,can not change
     gpio_set_direction(0, GPIO_MODE_INPUT);
 
-    //mdc to gpio4
-    gpio_matrix_out(4, EMAC_MDC_O_IDX, 0, 0);
-    //mdio to gpio2
-    gpio_matrix_out(2, EMAC_MDO_O_IDX, 0, 0);
-    gpio_matrix_in(2, EMAC_MDI_I_IDX, 0);
+    //mdc to gpio23 
+    gpio_matrix_out(PIN_SMI_MDC, EMAC_MDC_O_IDX, 0, 0);
+    //mdio to gpio18
+    gpio_matrix_out(PIN_SMI_MDIO, EMAC_MDO_O_IDX, 0, 0);
+    gpio_matrix_in(PIN_SMI_MDIO, EMAC_MDI_I_IDX, 0);
 }
 
 void eth_task(void *pvParameter)
@@ -163,6 +177,7 @@ void app_main()
     //Only FULLDUPLEX mode support flow ctrl now!
     config.flow_ctrl_enable = true;
     config.phy_get_partner_pause_enable = phy_tlk110_get_partner_pause_enable;    
+    config.phy_power_enable = phy_tlk110_power_enable;
 
     ret = esp_eth_init(&config);
 

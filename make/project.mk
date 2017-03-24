@@ -30,7 +30,8 @@ help:
 	@echo "make clean - Remove all build output"
 	@echo "make size - Display the memory footprint of the app"
 	@echo "make erase_flash - Erase entire flash contents"
-	@echo "make monitor - Display serial output on terminal console"
+	@echo "make monitor - Run idf_monitor tool to monitor serial output from app"
+	@echo "make simple_monitor - Monitor serial output on terminal console"
 	@echo ""
 	@echo "make app - Build just the app"
 	@echo "make app-flash - Flash just the app"
@@ -49,14 +50,23 @@ endif
 # make IDF_PATH a "real" absolute path
 # * works around the case where a shell character is embedded in the environment variable value.
 # * changes Windows-style C:/blah/ paths to MSYS/Cygwin style /c/blah
-export IDF_PATH:=$(realpath $(wildcard $(IDF_PATH)))
+ifeq ("$(OS)","Windows_NT")
+# On Windows MSYS2, make wildcard function returns empty string for paths of form /xyz
+# where /xyz is a directory inside the MSYS root - so we don't use it.
+SANITISED_IDF_PATH:=$(realpath $(IDF_PATH))
+else
+SANITISED_IDF_PATH:=$(realpath $(wildcard $(IDF_PATH)))
+endif
+
+export IDF_PATH := $(SANITISED_IDF_PATH)
 
 ifndef IDF_PATH
 $(error IDF_PATH variable is not set to a valid directory.)
 endif
 
-ifneq ("$(IDF_PATH)","$(realpath $(wildcard $(IDF_PATH)))")
-# due to the way make manages variables, this is hard to account for
+ifneq ("$(IDF_PATH)","$(SANITISED_IDF_PATH)")
+# implies IDF_PATH was overriden on make command line.
+# Due to the way make manages variables, this is hard to account for
 #
 # if you see this error, do the shell expansion in the shell ie
 # make IDF_PATH=~/blah not make IDF_PATH="~/blah"
@@ -118,17 +128,16 @@ COMPONENT_PATHS += $(abspath $(SRCDIRS))
 # A component is buildable if it has a component.mk makefile in it
 COMPONENT_PATHS_BUILDABLE := $(foreach cp,$(COMPONENT_PATHS),$(if $(wildcard $(cp)/component.mk),$(cp)))
 
-# If TESTS_ALL set to 1, set TEST_COMPONENTS to all components
+# If TESTS_ALL set to 1, set TEST_COMPONENTS_LIST to all components
 ifeq ($(TESTS_ALL),1)
-TEST_COMPONENTS := $(COMPONENTS)
+TEST_COMPONENTS_LIST := $(COMPONENTS)
+else
+# otherwise, use TEST_COMPONENTS
+TEST_COMPONENTS_LIST := $(TEST_COMPONENTS)
 endif
+TEST_COMPONENT_PATHS := $(foreach comp,$(TEST_COMPONENTS_LIST),$(firstword $(foreach dir,$(COMPONENT_DIRS),$(wildcard $(dir)/$(comp)/test))))
+TEST_COMPONENT_NAMES :=  $(foreach comp,$(TEST_COMPONENT_PATHS),$(lastword $(subst /, ,$(dir $(comp))))_test)
 
-# If TEST_COMPONENTS is set, create variables for building unit tests
-ifdef TEST_COMPONENTS
-override TEST_COMPONENTS := $(foreach comp,$(TEST_COMPONENTS),$(wildcard $(IDF_PATH)/components/$(comp)/test))
-TEST_COMPONENT_PATHS := $(TEST_COMPONENTS)
-TEST_COMPONENT_NAMES :=  $(foreach comp,$(TEST_COMPONENTS),$(lastword $(subst /, ,$(dir $(comp))))_test)
-endif
 
 # Initialise project-wide variables which can be added to by
 # each component.
@@ -177,8 +186,7 @@ endif
 	@echo $(ESPTOOLPY_WRITE_FLASH) $(ESPTOOL_ALL_FLASH_ARGS)
 
 
-# Git version of ESP-IDF (of the form v1.0-285-g5c4f707)
-IDF_VER := $(shell git -C $(IDF_PATH) describe)
+IDF_VER := $(shell git -C $(IDF_PATH) describe --always --tags --dirty)
 
 # Set default LDFLAGS
 
@@ -232,13 +240,14 @@ OPTIMIZATION_FLAGS = -Og
 endif
 
 # Enable generation of debugging symbols
-OPTIMIZATION_FLAGS += -ggdb
+# (we generate even in Release mode, as this has no impact on final binary size.)
+DEBUG_FLAGS ?= -ggdb
 
 # List of flags to pass to C compiler
 # If any flags are defined in application Makefile, add them at the end.
 CFLAGS := $(strip \
 	-std=gnu99 \
-	$(OPTIMIZATION_FLAGS) \
+	$(OPTIMIZATION_FLAGS) $(DEBUG_FLAGS) \
 	$(COMMON_FLAGS) \
 	$(COMMON_WARNING_FLAGS) -Wno-old-style-declaration \
 	$(CFLAGS) \
@@ -250,7 +259,7 @@ CXXFLAGS := $(strip \
 	-std=gnu++11 \
 	-fno-exceptions \
 	-fno-rtti \
-	$(OPTIMIZATION_FLAGS) \
+	$(OPTIMIZATION_FLAGS) $(DEBUG_FLAGS) \
 	$(COMMON_FLAGS) \
 	$(COMMON_WARNING_FLAGS) \
 	$(CXXFLAGS) \
@@ -370,12 +379,7 @@ $(BUILD_DIR_BASE)/$(2)/lib$(2).a: $(2)-build
 # If any component_project_vars.mk file is out of date, the make
 # process will call this target to rebuild it and then restart.
 #
-# Note: $(SDKCONFIG) is a normal prereq as we need to rebuild these
-# files whenever the config changes. $(SDKCONFIG_MAKEFILE) is an
-# order-only prereq because if it hasn't been rebuilt, we need to
-# build it first - but including it as a normal prereq can lead to
-# infinite restarts as the conf process will keep updating it.
-$(BUILD_DIR_BASE)/$(2)/component_project_vars.mk: $(1)/component.mk $(COMMON_MAKEFILES) $(SDKCONFIG) | $(BUILD_DIR_BASE)/$(2) $(SDKCONFIG_MAKEFILE)
+$(BUILD_DIR_BASE)/$(2)/component_project_vars.mk: $(1)/component.mk $(COMMON_MAKEFILES) $(SDKCONFIG_MAKEFILE) | $(BUILD_DIR_BASE)/$(2)
 	$(call ComponentMake,$(1),$(2)) component_project_vars.mk
 endef
 
@@ -406,7 +410,7 @@ define GenerateSubmoduleCheckTarget
 check-submodules: $(IDF_PATH)/$(1)/.git
 $(IDF_PATH)/$(1)/.git:
 	@echo "WARNING: Missing submodule $(1)..."
-	[ -d ${IDF_PATH}/.git ] || ( echo "ERROR: esp-idf must be cloned from git to work."; exit 1)
+	[ -e ${IDF_PATH}/.git ] || ( echo "ERROR: esp-idf must be cloned from git to work."; exit 1)
 	[ -x $(which git) ] || ( echo "ERROR: Need to run 'git submodule init $(1)' in esp-idf root directory."; exit 1)
 	@echo "Attempting 'git submodule update --init $(1)' in esp-idf root directory..."
 	cd ${IDF_PATH} && git submodule update --init $(1)

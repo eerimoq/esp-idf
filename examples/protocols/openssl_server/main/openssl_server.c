@@ -37,7 +37,7 @@ const static char *TAG = "Openssl_demo";
 
 #define OPENSSL_DEMO_SERVER_ACK "HTTP/1.1 200 OK\r\n" \
                                 "Content-Type: text/html\r\n" \
-                                "Content-Length: 98\r\n" \
+                                "Content-Length: 98\r\n\r\n" \
                                 "<html>\r\n" \
                                 "<head>\r\n" \
                                 "<title>OpenSSL demo</title></head><body>\r\n" \
@@ -71,6 +71,10 @@ static void openssl_demo_thread(void *p)
     const unsigned int prvtkey_pem_bytes = prvtkey_pem_end - prvtkey_pem_start;   
 
     ESP_LOGI(TAG, "SSL server context create ......");
+    /* For security reasons, it is best if you can use
+       TLSv1_2_server_method() here instead of TLS_server_method().
+       However some old browsers may not support TLS v1.2.
+    */
     ctx = SSL_CTX_new(TLS_server_method());
     if (!ctx) {
         ESP_LOGI(TAG, "failed");
@@ -251,6 +255,6 @@ static void wifi_conn_init(void)
 
 void app_main(void)
 {
-    nvs_flash_init();
+    ESP_ERROR_CHECK( nvs_flash_init() );
     wifi_conn_init();
 }

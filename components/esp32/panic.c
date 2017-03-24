@@ -34,6 +34,7 @@
 #include "esp_attr.h"
 #include "esp_err.h"
 #include "esp_core_dump.h"
+#include "esp_spi_flash.h"
 
 /*
   Panic handlers; these get called when an unhandled exception occurs or the assembly-level
@@ -107,16 +108,21 @@ void  __attribute__((weak)) vApplicationStackOverflowHook( TaskHandle_t xTask, s
 
 static bool abort_called;
 
-void abort()
+static __attribute__((noreturn)) inline void invoke_abort()
 {
-#if !CONFIG_ESP32_PANIC_SILENT_REBOOT
-    ets_printf("abort() was called at PC 0x%08x\n", (intptr_t)__builtin_return_address(0) - 3);
-#endif
     abort_called = true;
     while(1) {
         __asm__ ("break 0,0");
         *((int*) 0) = 0;
     }
+}
+
+void abort()
+{
+#if !CONFIG_ESP32_PANIC_SILENT_REBOOT
+    ets_printf("abort() was called at PC 0x%08x\n", (intptr_t)__builtin_return_address(0) - 3);
+#endif
+    invoke_abort();
 }
 
 
@@ -267,7 +273,7 @@ static void reconfigureAllWdts()
     TIMERG1.wdt_wprotect = 0;
 }
 
-#if CONFIG_ESP32_PANIC_GDBSTUB || CONFIG_ESP32_PANIC_PRINT_HALT
+#if CONFIG_ESP32_PANIC_GDBSTUB || CONFIG_ESP32_PANIC_PRINT_HALT || CONFIG_ESP32_ENABLE_COREDUMP
 /*
   This disables all the watchdogs for when we call the gdbstub.
 */
@@ -367,11 +373,15 @@ static void commonErrorHandler(XtExcFrame *frame)
     panicPutStr("Entering gdb stub now.\r\n");
     esp_gdbstub_panic_handler(frame);
 #else
+#if CONFIG_ESP32_ENABLE_COREDUMP
+    disableAllWdts();
 #if CONFIG_ESP32_ENABLE_COREDUMP_TO_FLASH
     esp_core_dump_to_flash(frame);
 #endif
 #if CONFIG_ESP32_ENABLE_COREDUMP_TO_UART && !CONFIG_ESP32_PANIC_SILENT_REBOOT
     esp_core_dump_to_uart(frame);
+#endif
+    reconfigureAllWdts();
 #endif
 #if CONFIG_ESP32_PANIC_PRINT_REBOOT || CONFIG_ESP32_PANIC_SILENT_REBOOT
     panicPutStr("Rebooting...\r\n");
@@ -437,4 +447,11 @@ void esp_clear_watchpoint(int no)
     }
 }
 
-
+void _esp_error_check_failed(esp_err_t rc, const char *file, int line, const char *function, const char *expression)
+{
+    ets_printf("ESP_ERROR_CHECK failed: esp_err_t 0x%x at 0x%08x\n", rc, (intptr_t)__builtin_return_address(0) - 3);
+    if (spi_flash_cache_enabled()) { // strings may be in flash cache
+        ets_printf("file: \"%s\" line %d\nfunc: %s\nexpression: %s\n", file, line, function, expression);
+    }
+    invoke_abort();
+}

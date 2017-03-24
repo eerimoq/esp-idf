@@ -93,7 +93,7 @@ void app_main()
 
 static void obtain_time(void)
 {
-    nvs_flash_init();
+    ESP_ERROR_CHECK( nvs_flash_init() );
     initialise_wifi();
     xEventGroupWaitBits(wifi_event_group, CONNECTED_BIT,
                         false, true, portMAX_DELAY);
@@ -110,6 +110,8 @@ static void obtain_time(void)
         time(&now);
         localtime_r(&now, &timeinfo);
     }
+
+    ESP_ERROR_CHECK( esp_wifi_stop() );
 }
 
 static void initialize_sntp(void)

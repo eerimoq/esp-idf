@@ -23,7 +23,7 @@ before_script:
 
 build_template_app:
   stage: build
-  image: espressif/esp32-ci-env
+  image: $CI_DOCKER_REGISTRY/esp32-ci-env
   tags:
     - build
 
@@ -31,6 +31,8 @@ build_template_app:
     SDK_PATH: "$CI_PROJECT_DIR"
     IDF_PATH: "$CI_PROJECT_DIR"
     GIT_STRATEGY: clone
+    BATCH_BUILD: "1"
+    IDF_CI_BUILD: "1"
 
   script:
     - git clone https://github.com/espressif/esp-idf-template.git
@@ -39,13 +41,11 @@ build_template_app:
     # using on esp-idf. If it doesn't exist then just stick to the default
     # branch
     - git checkout ${CI_BUILD_REF_NAME} || echo "Using esp-idf-template default branch..."
-    - make defconfig
     # Test debug build (default)
     - make all V=1
     # Now test release build
     - make clean
     - sed -i.bak -e's/CONFIG_OPTIMIZATION_LEVEL_DEBUG\=y/CONFIG_OPTIMIZATION_LEVEL_RELEASE=y/' sdkconfig
-    - make defconfig
     - make all V=1
     # Check if there are any stray printf/ets_printf references in WiFi libs
     - cd ../components/esp32/lib
@@ -57,12 +57,14 @@ build_template_app:
   stage: build
   tags:
     - build
-  image: espressif/esp32-ci-env
+  image: $CI_DOCKER_REGISTRY/esp32-ci-env
 
   variables:
     SDK_PATH: "$CI_PROJECT_DIR"
     IDF_PATH: "$CI_PROJECT_DIR"
     GIT_STRATEGY: clone
+    BATCH_BUILD: "1"
+
 
 build_ssc:
   <<: *build_template
@@ -79,6 +81,15 @@ build_ssc:
     - chmod +x gen_misc_ng.sh
     - ./gen_misc_ng.sh
 
+build_at:
+  <<: *build_template
+  script:
+    - git clone $GITLAB_SSH_SERVER/application/esp-at.git
+    - cd esp-at
+    - git checkout ${CI_BUILD_REF_NAME} || echo "Using esp-at default branch..."
+    - make defconfig
+    - make
+
 build_esp_idf_tests:
   <<: *build_template
   artifacts:
@@ -94,7 +105,6 @@ build_esp_idf_tests:
   script:
     - cd tools/unit-test-app
     - git checkout ${CI_BUILD_REF_NAME} || echo "Using default branch..."
-    - make defconfig
     - make TESTS_ALL=1
     - python UnitTestParser.py
 
@@ -117,7 +127,7 @@ build_examples:
 
 build_docs:
   stage: build
-  image: espressif/esp32-ci-env
+  image: $CI_DOCKER_REGISTRY/esp32-ci-env
   tags:
     - build_docs
   script:
@@ -135,7 +145,7 @@ build_docs:
 
 test_nvs_on_host:
   stage: test
-  image: espressif/esp32-ci-env
+  image: $CI_DOCKER_REGISTRY/esp32-ci-env
   tags:
     - nvs_host_test
   script:
@@ -144,7 +154,7 @@ test_nvs_on_host:
 
 test_build_system:
   stage: test
-  image: espressif/esp32-ci-env
+  image: $CI_DOCKER_REGISTRY/esp32-ci-env
   tags:
     - build_test
   variables:
@@ -154,10 +164,11 @@ test_build_system:
 
 test_report:
   stage: test_report
-  image: espressif/esp32-ci-env
+  image: $CI_DOCKER_REGISTRY/esp32-ci-env
   only:
     - master
     - triggers
+    - /^release\/v.*$/
   tags:
     - report
   variables:
@@ -211,9 +222,10 @@ push_master_to_github:
   tags:
     - deploy
   when: on_success
-  image: espressif/esp32-ci-env
+  image: $CI_DOCKER_REGISTRY/esp32-ci-env
   variables:
     GIT_STRATEGY: clone
+    GITHUB_PUSH_REFS: refs/remotes/origin/release refs/remotes/origin/master
   script:
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
@@ -222,7 +234,14 @@ push_master_to_github:
     - chmod 600 ~/.ssh/id_rsa
     - echo -e "Host github.com\n\tStrictHostKeyChecking no\n" >> ~/.ssh/config
     - git remote add github git@github.com:espressif/esp-idf.git
-    - git push --follow-tags github HEAD:master
+    # What the next line of script does: goes through the list of refs for all branches we push to github,
+    # generates a snippet of shell which is evaluated. The snippet checks CI_BUILD_REF against the SHA
+    # (aka objectname) at tip of each branch, and if any SHAs match then it checks out the local branch
+    # and then pushes that ref to a corresponding github branch
+    #
+    # NB: In gitlab 9.x, CI_BUILD_REF was deprecated. New name is CI_COMMIT_REF. If below command suddenly
+    # generates bash syntax errors, this is probably why.
+    - eval $(git for-each-ref --shell bash --format 'if [ $CI_BUILD_REF == %(objectname) ]; then git checkout -B %(refname:strip=3); git push --follow-tags github %(refname:strip=3); fi;' $GITHUB_PUSH_REFS)
 
 
 deploy_docs:
@@ -235,7 +254,7 @@ deploy_docs:
    - triggers
   tags:
     - deploy
-  image: espressif/esp32-ci-env
+  image: $CI_DOCKER_REGISTRY/esp32-ci-env
   script:
     - mkdir -p ~/.ssh
     - chmod 700 ~/.ssh
@@ -252,7 +271,7 @@ deploy_docs:
 
 check_doc_links:
   stage: test
-  image: espressif/esp32-ci-env
+  image: $CI_DOCKER_REGISTRY/esp32-ci-env
   tags:
     - check_doc_links
   only:
@@ -260,7 +279,7 @@ check_doc_links:
     - triggers
   script:
     # must be triggered with CHECK_LINKS=Yes, otherwise exit without test
-    - test $CHECK_LINKS = "Yes" || exit 0
+    - test "$CHECK_LINKS" = "Yes" || exit 0
     # can only run on master branch (otherwise the commit is not on Github yet)
     - test "${CI_BUILD_REF_NAME}" = "master" || exit 0
     - cd docs
@@ -278,12 +297,12 @@ check_doc_links:
   when: on_success
   only:
     - master
+    - /^release\/v.*$/
     - triggers
   allow_failure: true
 
   variables:
-    # LOCAL_ENV_CONFIG_PATH: define in template and jobs can overwrite if required
-    LOCAL_ENV_CONFIG_PATH: /home/gitlab-runner/LocalConfig/ESP32_IDF
+    LOCAL_ENV_CONFIG_PATH: $CI_PROJECT_DIR/ci-test-runner-configs/$CI_RUNNER_DESCRIPTION/ESP32_IDF
     BIN_PATH: "$CI_PROJECT_DIR/SSC/ssc_bin/SSC"
     APP_NAME: "ssc"
     LOG_PATH: "$CI_PROJECT_DIR/$CI_BUILD_REF"
@@ -308,6 +327,8 @@ check_doc_links:
     - base64 --decode --ignore-garbage ~/.ssh/id_rsa_base64 > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
     - echo -e "Host gitlab.espressif.cn\n\tStrictHostKeyChecking no\n" >> ~/.ssh/config
+    # clone local test env configs
+    - git clone $GITLAB_SSH_SERVER/qa/ci-test-runner-configs.git
     # clone test bench
     - git clone $GITLAB_SSH_SERVER/yinling/auto_test_script.git
     - cd auto_test_script
@@ -333,6 +354,8 @@ check_doc_links:
     - base64 --decode --ignore-garbage ~/.ssh/id_rsa_base64 > ~/.ssh/id_rsa
     - chmod 600 ~/.ssh/id_rsa
     - echo -e "Host gitlab.espressif.cn\n\tStrictHostKeyChecking no\n" >> ~/.ssh/config
+    # clone local test env configs
+    - git clone $GITLAB_SSH_SERVER/qa/ci-test-runner-configs.git
     # clone test bench
     - git clone $GITLAB_SSH_SERVER/yinling/auto_test_script.git
     - cd auto_test_script
@@ -346,8 +369,7 @@ check_doc_links:
   stage: unit_test
 
   variables:
-    # jobs MUST set CONFIG_FILE in before_script, and overwrite the variables above if necessary
-    LOCAL_ENV_CONFIG_PATH: /home/gitlab-runner/LocalConfig/ESP32_IDF
+    LOCAL_ENV_CONFIG_PATH: $CI_PROJECT_DIR/ci-test-runner-configs/$CI_RUNNER_DESCRIPTION/ESP32_IDF
     BIN_PATH: "$CI_PROJECT_DIR/tools/unit-test-app/build/"
     LOG_PATH: "$CI_PROJECT_DIR/$CI_BUILD_REF"
     APP_NAME: "ut"

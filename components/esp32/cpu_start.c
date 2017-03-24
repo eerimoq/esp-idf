@@ -38,7 +38,7 @@
 
 #include "tcpip_adapter.h"
 
-#include "heap_alloc_caps.h"
+#include "esp_heap_alloc_caps.h"
 #include "sdkconfig.h"
 #include "esp_system.h"
 #include "esp_spi_flash.h"
@@ -73,9 +73,6 @@ static bool app_cpu_started = false;
 static void do_global_ctors(void);
 static void main_task(void* args);
 extern void app_main(void);
-#if CONFIG_ESP32_PHY_AUTO_INIT
-static void do_phy_init();
-#endif
 
 extern int _bss_start;
 extern int _bss_end;
@@ -109,8 +106,6 @@ void IRAM_ATTR call_start_cpu0()
         memset(&_rtc_bss_start, 0, (&_rtc_bss_end - &_rtc_bss_start) * sizeof(_rtc_bss_start));
     }
 
-    // Initialize heap allocator
-    heap_alloc_caps_init();
 
     ESP_EARLY_LOGI(TAG, "Pro cpu up.");
 
@@ -134,6 +129,15 @@ void IRAM_ATTR call_start_cpu0()
     ESP_EARLY_LOGI(TAG, "Single core mode");
     CLEAR_PERI_REG_MASK(DPORT_APPCPU_CTRL_B_REG, DPORT_APPCPU_CLKGATE_EN);
 #endif
+
+    /* Initialize heap allocator. WARNING: This *needs* to happen *after* the app cpu has booted.
+       If the heap allocator is initialized first, it will put free memory linked list items into
+       memory also used by the ROM. Starting the app cpu will let its ROM initialize that memory,
+       corrupting those linked lists. Initializing the allocator *after* the app cpu has booted
+       works around this problem. */
+    heap_alloc_caps_init();
+
+
     ESP_EARLY_LOGI(TAG, "Pro cpu start user code");
     start_cpu0();
 }
@@ -210,17 +214,6 @@ void start_cpu0_default(void)
     /* init default OS-aware flash access critical section */
     spi_flash_guard_set(&g_flash_guard_default_ops);
 
-#if CONFIG_ESP32_PHY_AUTO_INIT
-    nvs_flash_init();
-    do_phy_init();
-#endif
-
-#if CONFIG_SW_COEXIST_ENABLE
-    if (coex_init() == ESP_OK) {
-        coexist_set_enable(true);
-    }
-#endif
-
 #if CONFIG_ESP32_ENABLE_COREDUMP
     esp_core_dump_init();
 #endif
@@ -264,43 +257,9 @@ static void main_task(void* args)
     // Now that the application is about to start, disable boot watchdogs
     REG_CLR_BIT(TIMG_WDTCONFIG0_REG(0), TIMG_WDT_FLASHBOOT_MOD_EN_S);
     REG_CLR_BIT(RTC_CNTL_WDTCONFIG0_REG, RTC_CNTL_WDT_FLASHBOOT_MOD_EN);
+    //Enable allocation in region where the startup stacks were located.
+    heap_alloc_enable_nonos_stack_tag();
     app_main();
     vTaskDelete(NULL);
 }
-
-#if CONFIG_ESP32_PHY_AUTO_INIT
-static void do_phy_init()
-{
-    esp_phy_calibration_mode_t calibration_mode = PHY_RF_CAL_PARTIAL;
-    if (rtc_get_reset_reason(0) == DEEPSLEEP_RESET) {
-        calibration_mode = PHY_RF_CAL_NONE;
-    }
-    const esp_phy_init_data_t* init_data = esp_phy_get_init_data();
-    if (init_data == NULL) {
-        ESP_LOGE(TAG, "failed to obtain PHY init data");
-        abort();
-    }
-    esp_phy_calibration_data_t* cal_data =
-            (esp_phy_calibration_data_t*) calloc(sizeof(esp_phy_calibration_data_t), 1);
-    if (cal_data == NULL) {
-        ESP_LOGE(TAG, "failed to allocate memory for RF calibration data");
-        abort();
-    }
-    esp_err_t err = esp_phy_load_cal_data_from_nvs(cal_data);
-    if (err != ESP_OK) {
-        ESP_LOGW(TAG, "failed to load RF calibration data, falling back to full calibration");
-        calibration_mode = PHY_RF_CAL_FULL;
-    }
-
-    esp_phy_init(init_data, calibration_mode, cal_data);
-
-    if (calibration_mode != PHY_RF_CAL_NONE) {
-        err = esp_phy_store_cal_data_to_nvs(cal_data);
-    } else {
-        err = ESP_OK;
-    }
-    esp_phy_release_init_data(init_data);
-    free(cal_data); // PHY maintains a copy of calibration data, so we can free this
-}
-#endif //CONFIG_ESP32_PHY_AUTO_INIT
 

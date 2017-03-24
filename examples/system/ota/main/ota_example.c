@@ -21,6 +21,7 @@
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
 
+#include "nvs.h"
 #include "nvs_flash.h"
 
 #define EXAMPLE_WIFI_SSID CONFIG_WIFI_SSID
@@ -33,17 +34,14 @@
 
 static const char *TAG = "ota";
 /*an ota data write buffer ready to write to the flash*/
-char ota_write_data[BUFFSIZE + 1] = { 0 };
+static char ota_write_data[BUFFSIZE + 1] = { 0 };
 /*an packet receive buffer*/
-char text[BUFFSIZE + 1] = { 0 };
+static char text[BUFFSIZE + 1] = { 0 };
 /* an image total length*/
-int binary_file_length = 0;
+static int binary_file_length = 0;
 /*socket id*/
-int socket_id = -1;
-char http_request[64] = {0};
-/* operate handle : uninitialized value is zero ,every ota begin would exponential growth*/
-esp_ota_handle_t out_handle = 0;
-esp_partition_t operate_partition;
+static int socket_id = -1;
+static char http_request[64] = {0};
 
 /* FreeRTOS event group to signal when we are connected & ready to make a request */
 static EventGroupHandle_t wifi_event_group;
@@ -95,7 +93,7 @@ static void initialise_wifi(void)
 }
 
 /*read buffer by byte still delim ,return read bytes counts*/
-int read_until(char *buffer, char delim, int len)
+static int read_until(char *buffer, char delim, int len)
 {
 //  /*TODO: delim check,buffer check,further: do an buffer length limited*/
     int i = 0;
@@ -109,7 +107,7 @@ int read_until(char *buffer, char delim, int len)
  * return true if packet including \r\n\r\n that means http packet header finished,start to receive packet body
  * otherwise return false
  * */
-bool resolve_pkg(char text[], int total_len, esp_ota_handle_t out_handle)
+static bool read_past_http_header(char text[], int total_len, esp_ota_handle_t update_handle)
 {
     /* i means current position */
     int i = 0, i_read_len = 0;
@@ -121,17 +119,10 @@ bool resolve_pkg(char text[], int total_len, esp_ota_handle_t out_handle)
             memset(ota_write_data, 0, BUFFSIZE);
             /*copy first http packet body to write buffer*/
             memcpy(ota_write_data, &(text[i + 2]), i_write_len);
-            /*check write packet header first byte:0xE9 second byte:0x09 */
-            if (ota_write_data[0] == 0xE9 && i_write_len >= 2 && ota_write_data[1] == 0x09) {
-                ESP_LOGI(TAG, "OTA Write Header format Check OK. first byte is %02x ,second byte is %02x", ota_write_data[0], ota_write_data[1]);
-            } else {
-                ESP_LOGE(TAG, "OTA Write Header format Check Failed! first byte is %02x ,second byte is %02x", ota_write_data[0], ota_write_data[1]);
-                return false;
-            }
 
-            esp_err_t err = esp_ota_write( out_handle, (const void *)ota_write_data, i_write_len);
+            esp_err_t err = esp_ota_write( update_handle, (const void *)ota_write_data, i_write_len);
             if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Error: esp_ota_write failed! err=%x", err);
+                ESP_LOGE(TAG, "Error: esp_ota_write failed! err=0x%x", err);
                 return false;
             } else {
                 ESP_LOGI(TAG, "esp_ota_write header OK");
@@ -177,48 +168,6 @@ bool connect_to_http_server()
     return false;
 }
 
-bool ota_init()
-{
-    esp_err_t err;
-    const esp_partition_t *esp_current_partition = esp_ota_get_boot_partition();
-    if (esp_current_partition->type != ESP_PARTITION_TYPE_APP) {
-        ESP_LOGE(TAG, "Error： esp_current_partition->type != ESP_PARTITION_TYPE_APP");
-        return false;
-    }
-
-    esp_partition_t find_partition;
-    memset(&operate_partition, 0, sizeof(esp_partition_t));
-    /*choose which OTA image should we write to*/
-    switch (esp_current_partition->subtype) {
-    case ESP_PARTITION_SUBTYPE_APP_FACTORY:
-        find_partition.subtype = ESP_PARTITION_SUBTYPE_APP_OTA_0;
-        break;
-    case  ESP_PARTITION_SUBTYPE_APP_OTA_0:
-        find_partition.subtype = ESP_PARTITION_SUBTYPE_APP_OTA_1;
-        break;
-    case ESP_PARTITION_SUBTYPE_APP_OTA_1:
-        find_partition.subtype = ESP_PARTITION_SUBTYPE_APP_OTA_0;
-        break;
-    default:
-        break;
-    }
-    find_partition.type = ESP_PARTITION_TYPE_APP;
-
-    const esp_partition_t *partition = esp_partition_find_first(find_partition.type, find_partition.subtype, NULL);
-    assert(partition != NULL);
-    memset(&operate_partition, 0, sizeof(esp_partition_t));
-    err = esp_ota_begin( partition, OTA_SIZE_UNKNOWN, &out_handle);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_ota_begin failed err=0x%x!", err);
-        return false;
-    } else {
-        memcpy(&operate_partition, partition, sizeof(esp_partition_t));
-        ESP_LOGI(TAG, "esp_ota_begin init OK");
-        return true;
-    }
-    return false;
-}
-
 void __attribute__((noreturn)) task_fatal_error()
 {
     ESP_LOGE(TAG, "Exiting task due to fatal error...");
@@ -233,7 +182,19 @@ void __attribute__((noreturn)) task_fatal_error()
 void main_task(void *pvParameter)
 {
     esp_err_t err;
+    /* update handle : set by esp_ota_begin(), must be freed via esp_ota_end() */
+    esp_ota_handle_t update_handle = 0 ;
+    const esp_partition_t *update_partition = NULL;
+
     ESP_LOGI(TAG, "Starting OTA example...");
+
+    const esp_partition_t *configured = esp_ota_get_boot_partition();
+    const esp_partition_t *running = esp_ota_get_running_partition();
+
+    assert(configured == running); /* fresh from reset, should be running from configured boot partition */
+    ESP_LOGI(TAG, "Running partition type %d subtype %d (offset 0x%08x)",
+             configured->type, configured->subtype, configured->address);
+
     /* Wait for the callback to set the CONNECTED_BIT in the
        event group.
     */
@@ -259,14 +220,19 @@ void main_task(void *pvParameter)
         ESP_LOGI(TAG, "Send GET request to server succeeded");
     }
 
-    if ( ota_init() ) {
-        ESP_LOGI(TAG, "OTA Init succeeded");
-    } else {
-        ESP_LOGE(TAG, "OTA Init failed");
+    update_partition = esp_ota_get_next_update_partition(NULL);
+    ESP_LOGI(TAG, "Writing to partition subtype %d at offset 0x%x",
+             update_partition->subtype, update_partition->address);
+    assert(update_partition != NULL);
+
+    err = esp_ota_begin(update_partition, OTA_SIZE_UNKNOWN, &update_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin failed, error=%d", err);
         task_fatal_error();
     }
+    ESP_LOGI(TAG, "esp_ota_begin succeeded");
 
-    bool pkg_body_start = false, flag = true;
+    bool resp_body_start = false, flag = true;
     /*deal with all receive packet*/
     while (flag) {
         memset(text, 0, TEXT_BUFFSIZE);
@@ -275,14 +241,14 @@ void main_task(void *pvParameter)
         if (buff_len < 0) { /*receive error*/
             ESP_LOGE(TAG, "Error: receive data error! errno=%d", errno);
             task_fatal_error();
-        } else if (buff_len > 0 && !pkg_body_start) { /*deal with packet header*/
+        } else if (buff_len > 0 && !resp_body_start) { /*deal with response header*/
             memcpy(ota_write_data, text, buff_len);
-            pkg_body_start = resolve_pkg(text, buff_len, out_handle);
-        } else if (buff_len > 0 && pkg_body_start) { /*deal with packet body*/
+            resp_body_start = read_past_http_header(text, buff_len, update_handle);
+        } else if (buff_len > 0 && resp_body_start) { /*deal with response body*/
             memcpy(ota_write_data, text, buff_len);
-            err = esp_ota_write( out_handle, (const void *)ota_write_data, buff_len);
+            err = esp_ota_write( update_handle, (const void *)ota_write_data, buff_len);
             if (err != ESP_OK) {
-                ESP_LOGE(TAG, "Error: esp_ota_write failed! err=%x", err);
+                ESP_LOGE(TAG, "Error: esp_ota_write failed! err=0x%x", err);
                 task_fatal_error();
             }
             binary_file_length += buff_len;
@@ -298,11 +264,11 @@ void main_task(void *pvParameter)
 
     ESP_LOGI(TAG, "Total Write binary data length : %d", binary_file_length);
 
-    if (esp_ota_end(out_handle) != ESP_OK) {
+    if (esp_ota_end(update_handle) != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_end failed!");
         task_fatal_error();
     }
-    err = esp_ota_set_boot_partition(&operate_partition);
+    err = esp_ota_set_boot_partition(update_partition);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "esp_ota_set_boot_partition failed! err=0x%x", err);
         task_fatal_error();
@@ -314,7 +280,20 @@ void main_task(void *pvParameter)
 
 void app_main()
 {
-    nvs_flash_init();
+    // Initialize NVS.
+    esp_err_t err = nvs_flash_init();
+    if (err == ESP_ERR_NVS_NO_FREE_PAGES) {
+        // OTA app partition table has a smaller NVS partition size than the non-OTA
+        // partition table. This size mismatch may cause NVS initialization to fail.
+        // If this happens, we erase NVS partition and initialize NVS again.
+        const esp_partition_t* nvs_partition = esp_partition_find_first(
+                ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_NVS, NULL);
+        assert(nvs_partition && "partition table must have an NVS partition");
+        ESP_ERROR_CHECK( esp_partition_erase_range(nvs_partition, 0, nvs_partition->size) );
+        err = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK( err );
+
     initialise_wifi();
     xTaskCreate(&main_task, "main_task", 8192, NULL, 5, NULL);
 }
